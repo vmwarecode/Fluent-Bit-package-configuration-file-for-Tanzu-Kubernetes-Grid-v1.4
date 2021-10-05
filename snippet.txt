@@ -1,6 +1,7 @@
 namespace: "tanzu-system-logging"
 fluent_bit:
   config:
+    #! https://docs.fluentbit.io/manual/administration/configuring-fluent-bit/variables
     service: |
       [Service]
         Flush         1
@@ -11,56 +12,95 @@ fluent_bit:
         HTTP_Listen   0.0.0.0
         HTTP_Port     2020
     outputs: |
-      [OUTPUT]
-        Name              stdout
-        Match             *
-
-      [OUTPUT]
-        Name   syslog
-        Match  kube.*
-        Host   vrli-01a.corp.tanzu
-        Port   514
-        Mode   udp
-        Syslog_Format        rfc5424
-        Syslog_Hostname_key  tkg_cluster
-        Syslog_Appname_key   pod_name
-        Syslog_Procid_key    container_name
-        Syslog_Message_key   message
-        Syslog_SD_key        k8s
-        Syslog_SD_key        labels
-        Syslog_SD_key        annotations
-        Syslog_SD_key        tkg
-
-      [OUTPUT]
-        Name   syslog
-        Match  kube_systemd.*
-        Host   vrli-01a.corp.tanzu
-        Port   514
-        Mode   udp
-        Syslog_Format        rfc5424
-        Syslog_Hostname_key  tkg_cluster
-        Syslog_Appname_key   tkg_instance
-        Syslog_Message_key   MESSAGE
-        Syslog_SD_key        systemd
+#      # References
+#      ## ElasticSearch
+#      [OUTPUT]
+#        Name            es
+#        Match           *
+#        Host            $ELASTICSEARCH_HOST
+#        Port            $ELASTICSEARCH_PORT
+#        Logstash_Format On
+#        Replace_Dots    On
+#        Retry_Limit     False
+#        Buffer_Size     $ELASTICSEARCH_BUFFER_SIZE
+#        tls             On
+#
+#      ## Kafka
+#      [OUTPUT]
+#        Name           kafka
+#        Match          *
+#        Brokers        $KAFKA_BROKER
+#        Topics         $KAFKA_TOPIC
+#        Timestamp_Key  @timestamp
+#        Retry_Limit    false
+#        # hides errors "Receive failed: Disconnected" when kafka kills idle connections
+#        rdkafka.log.connection.close false
+#        # producer buffer is not included in http://fluentbit.io/documentation/0.12/configuration/memory_usage.html#estimating
+#        rdkafka.queue.buffering.max.kbytes 10240
+#        # for logs you'll probably want this to be 0 or 1, not more
+#        rdkafka.request.required.acks 1
+#
+#      # Splunk
+#      [OUTPUT]
+#        Name           splunk
+#        Match          *
+#        Host           $SPLUNK_HOST
+#        Port           $SPLUNK_PORT
+#        Splunk_Token   $SPLUNK_TOKEN
+#        TLS            On
+#        TLS.Verify     Off
+#
+#      # HTTP
+#      [OUTPUT]
+#        Name              http
+#        Match             *
+#        Host              $HTTP_HOST
+#        Port              $HTTP_PORT
+#        URI               $HTTP_URI
+#        Header            $HTTP_HEADER_KEY_VALUE
+#        Format            $HTTP_FORMAT
+#        tls               On
+#
+#      # Syslog - kube
+#      [OUTPUT]
+#        Name   syslog
+#        Match  kube.*
+#        Host   $SYSLOG_HOST
+#        Port   $SYSLOG_PORT
+#        Mode   $SYSLOG_MODE
+#        Syslog_Format        rfc5424
+#        Syslog_Hostname_key  tkg_cluster
+#        Syslog_Appname_key   pod_name
+#        Syslog_Procid_key    container_name
+#        Syslog_Message_key   message
+#        Syslog_SD_key        k8s
+#        Syslog_SD_key        labels
+#        Syslog_SD_key        annotations
+#        Syslog_SD_key        tkg
+#
+#      # Syslog - systemd
+#      [OUTPUT]
+#        Name   syslog
+#        Match  kube_systemd.*
+#        Host   $SYSLOG_HOST
+#        Port   $SYSLOG_PORT
+#        Mode   $SYSLOG_MODE
+#        Syslog_Format        rfc5424
+#        Syslog_Hostname_key  tkg_cluster
+#        Syslog_Appname_key   tkg_instance
+#        Syslog_Message_key   MESSAGE
+#        Syslog_SD_key        systemd
 
     inputs: |
       [INPUT]
-        Name tail
-        Path /var/log/containers/*.log
-        Parser docker
-        Tag kube.*
-        Mem_Buf_Limit 5MB
-        Skip_Long_Lines On
-
-      [INPUT]
         Name              tail
-        Tag               audit.*
-        Path              /var/log/audit/audit.log
-        Parser            logfmt
-        DB                /var/log/flb_system_audit.db
-        Mem_Buf_Limit     50MB
-        Refresh_Interval  10
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            cri
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     5MB
         Skip_Long_Lines   On
+        Refresh_Interval  10
 
       [INPUT]
         Name                systemd
@@ -72,16 +112,26 @@ fluent_bit:
         Read_From_Tail      On
         Strip_Underscores   On
 
-      [INPUT]
-        Name              tail
-        Tag               apiserver_audit.*
-        Path              /var/log/kubernetes/audit.log
-        Parser            json
-        DB                /var/log/flb_kube_audit.db
-        Mem_Buf_Limit     50MB
-        Refresh_Interval  10
-        Skip_Long_Lines   On
-
+#      # Optional - enable audit logging
+#      [INPUT]
+#        Name              tail
+#        Tag               apiserver_audit.*
+#        Path              /var/log/kubernetes/audit.log
+#        Parser            json
+#        DB                /var/log/flb_kube_audit.db
+#        Mem_Buf_Limit     50MB
+#        Refresh_Interval  10
+#        Skip_Long_Lines   On
+#
+#      [INPUT]
+#        Name              tail
+#        Tag               audit.*
+#        Path              /var/log/audit/audit.log
+#        Parser            logfmt
+#        DB                /var/log/flb_system_audit.db
+#        Mem_Buf_Limit     50MB
+#        Refresh_Interval  10
+#        Skip_Long_Lines   On
     filters: |
       [FILTER]
         Name                kubernetes
@@ -95,67 +145,49 @@ fluent_bit:
         K8S-Logging.Parser  On
         K8S-Logging.Exclude On
 
-      [FILTER]
-        Name                record_modifier
-        Match               *
-        Record tkg_cluster tkg-wld
-        Record tkg_instance tkg-mgmt
-
-      [FILTER]
-        Name                  nest
-        Match                 kube.*
-        Operation             nest
-        Wildcard              tkg_instance*
-        Nest_Under            tkg
-
-      [FILTER]
-        Name                  nest
-        Match                 kube_systemd.*
-        Operation             nest
-        Wildcard              SYSTEMD*
-        Nest_Under            systemd
-
-      [FILTER]
-        Name                  modify
-        Match                 kube.*
-        Copy                  kubernetes k8s
-
-      [FILTER]
-        Name                  nest
-        Match                 kube.*
-        Operation             lift
-        Nested_Under          kubernetes
+#      # Optional - uncomment if using Syslog output plugin
+#      [FILTER]
+#        Name                  modify
+#        Match                 kube.*
+#        Copy                  kubernetes k8s
+#
+#      [FILTER]
+#        Name                  nest
+#        Match                 kube.*
+#        Operation             lift
+#        Nested_Under          kubernetes
 
     parsers: |
-      [PARSER]
-        Name   json
-        Format json
-        Time_Key time
-        Time_Format %d/%b/%Y:%H:%M:%S %z
-
+      # see https://github.com/fluent/fluent-bit/blob/v1.7.5/conf/parsers.conf
       [PARSER]
         Name   apache
         Format regex
-        Regex  ^(?[^ ]*) [^ ]* (?[^ ]*) \[(?[^\]]*)\] "(?\S+)(?: +(?[^\"]*?)(?: +\S*)?)?" (?[^ ]*) (?[^ ]*)(?: "(?[^\"]*)" "(?[^\"]*)")?$
+        Regex  ^(?<host>[^ ]*) [^ ]* (?<user>[^ ]*) \[(?<time>[^\]]*)\] "(?<method>\S+)(?: +(?<path>[^\"]*?)(?: +\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
         Time_Key time
         Time_Format %d/%b/%Y:%H:%M:%S %z
 
       [PARSER]
         Name   apache2
         Format regex
-        Regex  ^(?[^ ]*) [^ ]* (?[^ ]*) \[(?[^\]]*)\] "(?\S+)(?: +(?[^ ]*) +\S*)?" (?[^ ]*) (?[^ ]*)(?: "(?[^\"]*)" "(?[^\"]*)")?$
+        Regex  ^(?<host>[^ ]*) [^ ]* (?<user>[^ ]*) \[(?<time>[^\]]*)\] "(?<method>\S+)(?: +(?<path>[^ ]*) +\S*)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
         Time_Key time
         Time_Format %d/%b/%Y:%H:%M:%S %z
 
       [PARSER]
         Name   apache_error
         Format regex
-        Regex  ^\[[^ ]* (?[^\]]*)\] \[(?[^\]]*)\](?: \[pid (?[^\]]*)\])?( \[client (?[^\]]*)\])? (?.*)$
+        Regex  ^\[[^ ]* (?<time>[^\]]*)\] \[(?<level>[^\]]*)\](?: \[pid (?<pid>[^\]]*)\])?( \[client (?<client>[^\]]*)\])? (?<message>.*)$
 
       [PARSER]
         Name   nginx
         Format regex
-        Regex ^(?[^ ]*) (?[^ ]*) (?[^ ]*) \[(?[^\]]*)\] "(?\S+)(?: +(?[^\"]*?)(?: +\S*)?)?" (?[^ ]*) (?[^ ]*)(?: "(?[^\"]*)" "(?[^\"]*)")?$
+        Regex ^(?<remote>[^ ]*) (?<host>[^ ]*) (?<user>[^ ]*) \[(?<time>[^\]]*)\] "(?<method>\S+)(?: +(?<path>[^\"]*?)(?: +\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+      [PARSER]
+        Name   json
+        Format json
         Time_Key time
         Time_Format %d/%b/%Y:%H:%M:%S %z
 
@@ -169,7 +201,7 @@ fluent_bit:
       [PARSER]
         Name        docker-daemon
         Format      regex
-        Regex       time="(?[^ ]*)" level=(?[^ ]*) msg="(?[^ ].*)"
+        Regex       time="(?<time>[^ ]*)" level=(?<level>[^ ]*) msg="(?<msg>[^ ].*)"
         Time_Key    time
         Time_Format %Y-%m-%dT%H:%M:%S.%L
         Time_Keep   On
@@ -178,7 +210,7 @@ fluent_bit:
         # http://rubular.com/r/tjUt3Awgg4
         Name cri
         Format regex
-        Regex ^(?[^ ]+) (?stdout|stderr) (?[^ ]*) (?.*)$
+        Regex ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
         Time_Key    time
         Time_Format %Y-%m-%dT%H:%M:%S.%L%z
 
@@ -189,7 +221,7 @@ fluent_bit:
       [PARSER]
         Name        syslog-rfc5424
         Format      regex
-        Regex       ^\<(?[0-9]{1,5})\>1 (?[^ ]+) (?[^ ]+) (?[^ ]+) (?[-0-9]+) (?[^ ]+) (?(\[(.*)\]|-)) (?.+)$
+        Regex       ^\<(?<pri>[0-9]{1,5})\>1 (?<time>[^ ]+) (?<host>[^ ]+) (?<ident>[^ ]+) (?<pid>[-0-9]+) (?<msgid>[^ ]+) (?<extradata>(\[(.*)\]|-)) (?<message>.+)$
         Time_Key    time
         Time_Format %Y-%m-%dT%H:%M:%S.%L
         Time_Keep   On
@@ -197,7 +229,7 @@ fluent_bit:
       [PARSER]
         Name        syslog-rfc3164-local
         Format      regex
-        Regex       ^\<(?[0-9]+)\>(?[^ ]* {1,2}[^ ]* [^ ]*) (?[a-zA-Z0-9_\/\.\-]*)(?:\[(?[0-9]+)\])?(?:[^\:]*\:)? *(?.*)$
+        Regex       ^\<(?<pri>[0-9]+)\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<ident>[a-zA-Z0-9_\/\.\-]*)(?:\[(?<pid>[0-9]+)\])?(?:[^\:]*\:)? *(?<message>.*)$
         Time_Key    time
         Time_Format %b %d %H:%M:%S
         Time_Keep   On
@@ -205,7 +237,7 @@ fluent_bit:
       [PARSER]
         Name        syslog-rfc3164
         Format      regex
-        Regex       /^\<(?[0-9]+)\>(?[^ ]* {1,2}[^ ]* [^ ]*) (?[^ ]*) (?[a-zA-Z0-9_\/\.\-]*)(?:\[(?[0-9]+)\])?(?:[^\:]*\:)? *(?.*)$/
+        Regex       /^\<(?<pri>[0-9]+)\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[a-zA-Z0-9_\/\.\-]*)(?:\[(?<pid>[0-9]+)\])?(?:[^\:]*\:)? *(?<message>.*)$/
         Time_Key    time
         Time_Format %b %d %H:%M:%S
         Time_Format %Y-%m-%dT%H:%M:%S.%L
@@ -214,11 +246,18 @@ fluent_bit:
       [PARSER]
         Name    kube-custom
         Format  regex
-        Regex   (?[^.]+)?\.?(?[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?[^_]+)_(?.+)-(?[a-z0-9]{64})\.log$
+        Regex   (?<tag>[^.]+)?\.?(?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-(?<docker_id>[a-z0-9]{64})\.log$
 
     streams: ""
     plugins: ""
+  #! optional configuration for the daemonset
   daemonset:
-    resources: {}
-    podAnnotations: {}
-    podLabels: {}
+    resources: { }
+    #! limits:
+    #!   cpu: 100m
+    #!   memory: 128Mi
+    #! requests:
+    #!   cpu: 100m
+    #!   memory: 128Mi
+    podAnnotations: { }
+    podLabels: { }
